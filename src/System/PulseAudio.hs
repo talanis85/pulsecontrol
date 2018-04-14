@@ -194,6 +194,14 @@ pulseError err = do
     withForeignPtr (paMainLoop pa) $ \mainloop -> PA.pa_mainloop_quit mainloop 0
 -}
 
+withPA :: PulseAudio -> (Ptr PA.ThreadedMainLoop -> Ptr PA.Context -> IO a) -> IO a
+withPA pa f = withForeignPtr (paMainLoop pa) $ \mainloop ->
+  withForeignPtr (paContext pa) $ \context -> do
+    PA.pa_threaded_mainloop_lock mainloop
+    r <- f mainloop context
+    PA.pa_threaded_mainloop_unlock mainloop
+    return r
+
 pulseConnect :: Maybe String -> PulseM ()
 pulseConnect server = contErrT $ \cont exit -> do
   liftIO $ traceIO "pulseConnect"
@@ -205,12 +213,12 @@ pulseConnect server = contErrT $ \cont exit -> do
       let handler s | s == PA.contextReady = runReaderT (cont ()) pa
                     | s == PA.contextFailed = do
                         err <- getContextError ctx
-                        withForeignPtr (paContext pa) $ \context ->
+                        withPA pa $ \mainloop context -> do
                           PA.pa_context_set_state_callback context nullFunPtr nullPtr
                         runReaderT (exit ("pa_context_connect_cb: " ++ err)) pa
                     | otherwise = return ()
       handler s
-    withForeignPtr (paContext pa) $ \context -> do
+    withPA pa $ \mainloop context -> do
       PA.pa_context_set_state_callback context callback nullPtr
       case server of
         Just server' -> withCString server' $ \cServer ->
@@ -221,7 +229,7 @@ pulseConnect server = contErrT $ \cont exit -> do
   if PA.isError err
      then do
        errstr <- liftIO (getStrError err)
-       liftIO $ withForeignPtr (paContext pa) $ \context ->
+       liftIO $ withPA pa $ \mainloop context ->
          PA.pa_context_set_state_callback context nullFunPtr nullPtr
        exit ("pa_context_connect: " ++ errstr)
      else return ()
@@ -256,7 +264,7 @@ queryList mkCallback call = contErrT $ \cont exit -> do
          else do
            x' <- peek x
            modifyIORef ref (x' :)
-    withForeignPtr (paContext pa) $ \ctx -> call ctx callback nullPtr
+    withPA pa $ \mainloop context -> call context callback nullPtr
     return ()
 
 pulseListSinks :: PulseM [SinkInfo]
@@ -295,8 +303,8 @@ pulseSetSinkVolume index dbVolumes = contErrT $ \cont exit -> do
       traceIO "pulseSetSinkVolume - callback"
       free pCVolume
       runReaderT (cont ()) pa
-    withForeignPtr (paContext pa) $ \ctx ->
-      PA.pa_context_set_sink_volume_by_index ctx index pCVolume callback nullPtr
+    withPA pa $ \mainloop context ->
+      PA.pa_context_set_sink_volume_by_index context index pCVolume callback nullPtr
     return ()
 
 mkSinkIndex :: Int -> PA.SinkIndex
@@ -311,10 +319,10 @@ pulseWaitForChange = contErrT $ \cont exit -> do
   pa <- ask
   liftIO $ do
     callback <- PA.pa_context_subscribe_cb $ \ctx eventType idx userdata -> do
-      withForeignPtr (paContext pa) $ \context -> do
+      withPA pa $ \mainloop context -> do
         PA.pa_context_set_subscribe_callback context nullFunPtr nullPtr
       runReaderT (cont ()) pa
-    withForeignPtr (paContext pa) $ \context -> do
+    withPA pa $ \mainloop context -> do
       PA.pa_context_set_subscribe_callback context callback nullPtr
       PA.pa_context_subscribe context PA.subscriptionMaskAll nullFunPtr nullPtr
     return ()

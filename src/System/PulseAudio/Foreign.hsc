@@ -122,6 +122,9 @@ foreign import ccall "pa_threaded_mainloop_free" pa_threaded_mainloop_free
 foreign import ccall "&pa_threaded_mainloop_free" pa_threaded_mainloop_free_p
   :: FunPtr (Ptr ThreadedMainLoop -> IO ())
 
+foreign import ccall "pa_threaded_mainloop_lock" pa_threaded_mainloop_lock
+  :: Ptr ThreadedMainLoop -> IO ()
+
 foreign import ccall "pa_threaded_mainloop_new" pa_threaded_mainloop_new
   :: IO (Ptr ThreadedMainLoop)
 
@@ -129,6 +132,9 @@ foreign import ccall "pa_threaded_mainloop_start" pa_threaded_mainloop_start
   :: Ptr ThreadedMainLoop -> IO CInt
 
 foreign import ccall "pa_threaded_mainloop_stop" pa_threaded_mainloop_stop
+  :: Ptr ThreadedMainLoop -> IO ()
+
+foreign import ccall "pa_threaded_mainloop_unlock" pa_threaded_mainloop_unlock
   :: Ptr ThreadedMainLoop -> IO ()
 
 type ContextNotifyCb = Ptr Context -> Ptr () -> IO ()

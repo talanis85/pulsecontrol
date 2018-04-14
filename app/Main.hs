@@ -1,13 +1,14 @@
 module Main where
 
 import Control.Concurrent
+import Control.Monad.Trans
 import System.PulseAudio
 
 main :: IO ()
 main = do
   pa <- pulseInit "pulsetest"
-  runPulse pa $ pulseConnect (Just "/run/user/1000/pulse/native")
   result <- runPulse pa $ do
+    pulseConnect (Just "/run/user/1000/pulse/native")
     sinks <- pulseListSinks
     sinkInputs <- pulseListSinkInputs
     sources <- pulseListSources
