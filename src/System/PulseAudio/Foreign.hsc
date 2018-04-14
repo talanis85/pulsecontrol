@@ -34,6 +34,7 @@ data Proplist
 data SinkPortInfo
 data SpawnApi
 data SourcePortInfo
+data ThreadedMainLoop
 
 newtype Error = Error { getError :: CInt }
 
@@ -67,6 +68,9 @@ foreign import ccall "pa_context_get_state" pa_context_get_state
 foreign import ccall "pa_context_new" pa_context_new
   :: Ptr MainLoopApi -> CString -> IO (Ptr Context)
 
+foreign import ccall "pa_context_set_subscribe_callback" pa_context_set_subscribe_callback
+  :: Ptr Context -> FunPtr ContextSubscribeCb -> Ptr () -> IO ()
+
 foreign import ccall "pa_context_set_sink_volume_by_index" pa_context_set_sink_volume_by_index
   :: Ptr Context -> SinkIndex -> Ptr CVolume -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
 
@@ -75,6 +79,9 @@ foreign import ccall "pa_context_set_source_volume_by_index" pa_context_set_sour
 
 foreign import ccall "pa_context_set_state_callback" pa_context_set_state_callback
   :: Ptr Context -> FunPtr ContextNotifyCb -> Ptr () -> IO ()
+
+foreign import ccall "pa_context_subscribe" pa_context_subscribe
+  :: Ptr Context -> SubscriptionMask -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
 
 foreign import ccall "pa_mainloop_new" pa_mainloop_new
   :: IO (Ptr MainLoop)
@@ -103,9 +110,34 @@ foreign import ccall "pa_strerror" pa_strerror
 foreign import ccall "pa_sw_volume_from_dB" pa_sw_volume_from_dB
   :: Double -> Volume
 
+foreign import ccall "pa_sw_volume_to_dB" pa_sw_volume_to_dB
+  :: Volume -> Double
+
+foreign import ccall "pa_threaded_mainloop_get_api" pa_threaded_mainloop_get_api
+  :: Ptr ThreadedMainLoop -> IO (Ptr MainLoopApi)
+
+foreign import ccall "pa_threaded_mainloop_free" pa_threaded_mainloop_free
+  :: Ptr ThreadedMainLoop -> IO ()
+
+foreign import ccall "&pa_threaded_mainloop_free" pa_threaded_mainloop_free_p
+  :: FunPtr (Ptr ThreadedMainLoop -> IO ())
+
+foreign import ccall "pa_threaded_mainloop_new" pa_threaded_mainloop_new
+  :: IO (Ptr ThreadedMainLoop)
+
+foreign import ccall "pa_threaded_mainloop_start" pa_threaded_mainloop_start
+  :: Ptr ThreadedMainLoop -> IO CInt
+
+foreign import ccall "pa_threaded_mainloop_stop" pa_threaded_mainloop_stop
+  :: Ptr ThreadedMainLoop -> IO ()
+
 type ContextNotifyCb = Ptr Context -> Ptr () -> IO ()
 foreign import ccall "wrapper" pa_context_notify_cb
   :: ContextNotifyCb -> IO (FunPtr ContextNotifyCb)
+
+type ContextSubscribeCb = Ptr Context -> SubscriptionEventType -> CUInt -> Ptr () -> IO ()
+foreign import ccall "wrapper" pa_context_subscribe_cb
+  :: ContextSubscribeCb -> IO (FunPtr ContextSubscribeCb)
 
 type ContextSuccessCb = Ptr Context -> Int -> Ptr () -> IO ()
 foreign import ccall "wrapper" pa_context_success_cb
@@ -314,6 +346,46 @@ newtype SourceState = SourceState { getSourceState :: CInt }
   , sourceRunning = PA_SOURCE_RUNNING
   , sourceIdle = PA_SOURCE_IDLE
   , sourceSuspended = PA_SOURCE_SUSPENDED
+  }
+
+-- pa_subscription_event_type
+
+newtype SubscriptionEventType = SubscriptionEventType { getSubscriptionEventType :: CInt }
+  deriving (Show, Storable)
+
+#{enum SubscriptionEventType, SubscriptionEventType
+  , subscriptionEventSink = PA_SUBSCRIPTION_EVENT_SINK
+  , subscriptionEventSource = PA_SUBSCRIPTION_EVENT_SOURCE
+  , subscriptionEventSinkInput = PA_SUBSCRIPTION_EVENT_SINK_INPUT
+  , subscriptionEventSourceOutput = PA_SUBSCRIPTION_EVENT_SOURCE_OUTPUT
+  , subscriptionEventModule = PA_SUBSCRIPTION_EVENT_MODULE
+  , subscriptionEventClient = PA_SUBSCRIPTION_EVENT_CLIENT
+  , subscriptionEventSampleCache = PA_SUBSCRIPTION_EVENT_SAMPLE_CACHE
+  , subscriptionEventServer = PA_SUBSCRIPTION_EVENT_SERVER
+  , subscriptionEventCard = PA_SUBSCRIPTION_EVENT_CARD
+  , subscriptionEventFacilityMask = PA_SUBSCRIPTION_EVENT_FACILITY_MASK
+  , subscriptionEventNew = PA_SUBSCRIPTION_EVENT_NEW
+  , subscriptionEventChange = PA_SUBSCRIPTION_EVENT_CHANGE
+  , subscriptionEventRemove = PA_SUBSCRIPTION_EVENT_REMOVE
+  , subscriptionEventTypeMask = PA_SUBSCRIPTION_EVENT_TYPE_MASK
+  }
+
+-- pa_subscription_mask
+
+newtype SubscriptionMask = SubscriptionMask { getSubscriptionMask :: CInt }
+  deriving (Show, Storable)
+
+#{enum SubscriptionMask, SubscriptionMask
+  , subscriptionMaskSink = PA_SUBSCRIPTION_MASK_SINK
+  , subscriptionMaskSource = PA_SUBSCRIPTION_MASK_SOURCE
+  , subscriptionMaskSinkInput = PA_SUBSCRIPTION_MASK_SINK_INPUT
+  , subscriptionMaskSourceOutput = PA_SUBSCRIPTION_MASK_SOURCE_OUTPUT
+  , subscriptionMaskModule = PA_SUBSCRIPTION_MASK_MODULE
+  , subscriptionMaskClient = PA_SUBSCRIPTION_MASK_CLIENT
+  , subscriptionMaskSampleCache = PA_SUBSCRIPTION_MASK_SAMPLE_CACHE
+  , subscriptionMaskServer = PA_SUBSCRIPTION_MASK_SERVER
+  , subscriptionMaskCard = PA_SUBSCRIPTION_MASK_CARD
+  , subscriptionMaskAll = PA_SUBSCRIPTION_MASK_ALL
   }
 
 -- Structures -----------------------------------------------------------------

@@ -5,9 +5,9 @@ import System.PulseAudio
 
 main :: IO ()
 main = do
-  pa <- initPulse "pulsetest"
-  runPulseMSync pa $ pulseConnect (Just "/run/user/1000/pulse/native")
-  result <- runPulseMSync pa $ do
+  pa <- pulseInit "pulsetest"
+  runPulse pa $ pulseConnect (Just "/run/user/1000/pulse/native")
+  result <- runPulse pa $ do
     sinks <- pulseListSinks
     sinkInputs <- pulseListSinkInputs
     sources <- pulseListSources
@@ -35,3 +35,4 @@ main = do
       print sources
       putStrLn "Source Outputs:"
       print sourceOutputs
+  pulseQuit pa

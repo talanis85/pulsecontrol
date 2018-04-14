@@ -1,11 +1,10 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module System.PulseAudio
   ( PulseAudio
-  , initPulse
-  , runPulseM
-  , runPulseMSync
+  , execPulse
   , runPulse
-  , runPulseSync
   , pulseConnect
+  , pulseInit
   , pulseQuit
   , pulseListSinks
   , pulseListSinkInputs
@@ -13,8 +12,13 @@ module System.PulseAudio
   , pulseListSourceOutputs
   , DbVolume (..)
   , pulseSetSinkVolume
+  , pulseWaitForChange
   , mkSinkIndex
   , mkSourceIndex
+  , SinkInfo (..)
+  , SourceInfo (..)
+  , SinkInputInfo (..)
+  , SourceOutputInfo (..)
   ) where
 
 import Control.Concurrent.MVar
@@ -32,46 +36,98 @@ import Debug.Trace
 
 data PulseAudio = PulseAudio
   { paContext :: ForeignPtr PA.Context
-  , paMainLoop :: ForeignPtr PA.MainLoop
+  , paMainLoop :: ForeignPtr PA.ThreadedMainLoop
   }
 
 type PulseM = ContErrT String () (ReaderT PulseAudio IO)
 
-initPulse :: String -> IO PulseAudio
-initPulse name = do
-  mainloop <- PA.pa_mainloop_new
-  mainloopForeign <- newForeignPtr PA.pa_mainloop_free_p mainloop
-  mainloopApi <- PA.pa_mainloop_get_api mainloop
+data SinkInfo = SinkInfo
+  { siMute :: Bool
+  , siName :: String
+  , siVolume :: [DbVolume]
+  } deriving (Show, Eq)
+
+mkSinkInfo :: PA.SinkInfo -> SinkInfo
+mkSinkInfo si = SinkInfo
+  { siMute = PA.siMute si
+  , siName = PA.siName si
+  , siVolume = map volumeToDbVolume (PA.cvValues (PA.siVolume si))
+  }
+
+data SourceInfo = SourceInfo
+  { soMute :: Bool
+  , soName :: String
+  , soVolume :: [DbVolume]
+  } deriving (Show, Eq)
+
+mkSourceInfo :: PA.SourceInfo -> SourceInfo
+mkSourceInfo so = SourceInfo
+  { soMute = PA.soMute so
+  , soName = PA.soName so
+  , soVolume = map volumeToDbVolume (PA.cvValues (PA.soVolume so))
+  }
+
+data SinkInputInfo = SinkInputInfo
+  { siiMute :: Bool
+  , siiName :: String
+  , siiVolume :: [DbVolume]
+  } deriving (Show, Eq)
+
+mkSinkInputInfo :: PA.SinkInputInfo -> SinkInputInfo
+mkSinkInputInfo sii = SinkInputInfo
+  { siiMute = PA.siiMute sii
+  , siiName = PA.siiName sii
+  , siiVolume = map volumeToDbVolume (PA.cvValues (PA.siiVolume sii))
+  }
+
+data SourceOutputInfo = SourceOutputInfo
+  { sooMute :: Bool
+  , sooName :: String
+  , sooVolume :: [DbVolume]
+  } deriving (Show, Eq)
+
+mkSourceOutputInfo :: PA.SourceOutputInfo -> SourceOutputInfo
+mkSourceOutputInfo soo = SourceOutputInfo
+  { sooMute = PA.sooMute soo
+  , sooName = PA.sooName soo
+  , sooVolume = map volumeToDbVolume (PA.cvValues (PA.sooVolume soo))
+  }
+
+pulseInit :: String -> IO PulseAudio
+pulseInit name = do
+  mainloop <- PA.pa_threaded_mainloop_new
+  mainloopForeign <- newForeignPtr PA.pa_threaded_mainloop_free_p mainloop
+  mainloopApi <- PA.pa_threaded_mainloop_get_api mainloop
 
   context <- withCString name (PA.pa_context_new mainloopApi)
   contextForeign <- newForeignPtr_ context -- todo: do we need a finalizer here?
+
+  PA.pa_threaded_mainloop_start mainloop
 
   return PulseAudio
     { paContext = contextForeign
     , paMainLoop = mainloopForeign
     }
 
-runPulseM :: PulseAudio -> (a -> IO ()) -> (String -> IO ()) -> PulseM a -> IO ()
-runPulseM pa onResult onError m = Control.Monad.void $
+pulseQuit :: PulseAudio -> IO ()
+pulseQuit pa =
+  withForeignPtr (paMainLoop pa) $ \mainloop -> PA.pa_threaded_mainloop_stop mainloop
+
+execPulse :: PulseAudio -> (a -> IO ()) -> (String -> IO ()) -> PulseM a -> IO ()
+execPulse pa onResult onError m = Control.Monad.void $
   runReaderT (runContErrT m (liftIO . onResult) (liftIO . onError)) pa
 
-runPulseMSync :: PulseAudio -> PulseM a -> IO (Either String a)
-runPulseMSync pa m = do
+runPulse :: PulseAudio -> PulseM a -> IO (Either String a)
+runPulse pa m = do
   result <- newEmptyMVar
 
-  let onResult r = do
-        putMVar result (Right r)
-        withForeignPtr (paMainLoop pa) $ \mainloop ->
-          PA.pa_mainloop_quit mainloop 0
-      onError e = do
-        putMVar result (Left e)
-        withForeignPtr (paMainLoop pa) $ \mainloop ->
-          PA.pa_mainloop_quit mainloop 0
+  let onResult r = putMVar result (Right r)
+      onError e = putMVar result (Left e)
 
-  runPulseM pa onResult onError m
-  withForeignPtr (paMainLoop pa) $ \mainloop -> PA.pa_mainloop_run mainloop nullPtr
+  execPulse pa onResult onError m
   takeMVar result
 
+{-
 runPulse :: String -> (a -> IO ()) -> (String -> IO ()) -> PulseM a -> IO ()
 runPulse name onResult onError m = do
   mainloop <- PA.pa_mainloop_new
@@ -118,6 +174,7 @@ runPulseSync name m = do
   withForeignPtr (paMainLoop pa) $ \mainloop -> PA.pa_mainloop_run mainloop nullPtr
 
   takeMVar result
+-}
 
 getContextError :: Ptr PA.Context -> IO String
 getContextError ctx = do
@@ -169,11 +226,6 @@ pulseConnect server = contErrT $ \cont exit -> do
        exit ("pa_context_connect: " ++ errstr)
      else return ()
 
-pulseQuit :: PulseM ()
-pulseQuit = do
-  pa <- lift ask
-  liftIO $ withForeignPtr (paMainLoop pa) $ \mainloop -> PA.pa_mainloop_quit mainloop 0
-
 {-
 pulseConnect :: String -> String -> IO (Either String PulseAudio)
 pulseConnect name server = do
@@ -207,22 +259,29 @@ queryList mkCallback call = contErrT $ \cont exit -> do
     withForeignPtr (paContext pa) $ \ctx -> call ctx callback nullPtr
     return ()
 
-pulseListSinks :: PulseM [PA.SinkInfo]
-pulseListSinks = queryList PA.pa_sink_info_cb PA.pa_context_get_sink_info_list
+pulseListSinks :: PulseM [SinkInfo]
+pulseListSinks = map mkSinkInfo <$> queryList PA.pa_sink_info_cb PA.pa_context_get_sink_info_list
 
-pulseListSinkInputs :: PulseM [PA.SinkInputInfo]
-pulseListSinkInputs = queryList PA.pa_sink_input_info_cb PA.pa_context_get_sink_input_info_list
+pulseListSinkInputs :: PulseM [SinkInputInfo]
+pulseListSinkInputs = map mkSinkInputInfo <$> queryList PA.pa_sink_input_info_cb PA.pa_context_get_sink_input_info_list
 
-pulseListSources :: PulseM [PA.SourceInfo]
-pulseListSources = queryList PA.pa_source_info_cb PA.pa_context_get_source_info_list
+pulseListSources :: PulseM [SourceInfo]
+pulseListSources = map mkSourceInfo <$> queryList PA.pa_source_info_cb PA.pa_context_get_source_info_list
 
-pulseListSourceOutputs :: PulseM [PA.SourceOutputInfo]
-pulseListSourceOutputs = queryList PA.pa_source_output_info_cb PA.pa_context_get_source_output_info_list
+pulseListSourceOutputs :: PulseM [SourceOutputInfo]
+pulseListSourceOutputs = map mkSourceOutputInfo <$> queryList PA.pa_source_output_info_cb PA.pa_context_get_source_output_info_list
 
 newtype DbVolume = DbVolume { getDbVolume :: Double }
+  deriving (Ord, Eq, Num, Fractional, RealFrac, Real)
+
+instance Show DbVolume where
+  show (DbVolume x) = show x ++ " dB"
 
 dbVolumeToVolume :: DbVolume -> PA.Volume
 dbVolumeToVolume dbvol = PA.pa_sw_volume_from_dB (getDbVolume dbvol)
+
+volumeToDbVolume :: PA.Volume -> DbVolume
+volumeToDbVolume vol = DbVolume (PA.pa_sw_volume_to_dB vol)
 
 pulseSetSinkVolume :: PA.SinkIndex -> [DbVolume] -> PulseM ()
 pulseSetSinkVolume index dbVolumes = contErrT $ \cont exit -> do
@@ -245,3 +304,17 @@ mkSinkIndex = PA.SinkIndex . fromIntegral
 
 mkSourceIndex :: Int -> PA.SourceIndex
 mkSourceIndex = PA.SourceIndex . fromIntegral
+
+pulseWaitForChange :: PulseM ()
+pulseWaitForChange = contErrT $ \cont exit -> do
+  liftIO $ traceIO "pulseWaitForChange"
+  pa <- ask
+  liftIO $ do
+    callback <- PA.pa_context_subscribe_cb $ \ctx eventType idx userdata -> do
+      withForeignPtr (paContext pa) $ \context -> do
+        PA.pa_context_set_subscribe_callback context nullFunPtr nullPtr
+      runReaderT (cont ()) pa
+    withForeignPtr (paContext pa) $ \context -> do
+      PA.pa_context_set_subscribe_callback context callback nullPtr
+      PA.pa_context_subscribe context PA.subscriptionMaskAll nullFunPtr nullPtr
+    return ()
