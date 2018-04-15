@@ -254,18 +254,31 @@ pulseConnect name server = do
 
 queryList mkCallback call = contErrT $ \cont exit -> do
   ref <- liftIO $ newIORef []
+  done <- liftIO $ newEmptyMVar
   pa <- ask
   liftIO $ do
     callback <- mkCallback $ \ctx x eol userdata -> do
       if eol > 0
          then do
            results <- readIORef ref
+           let mainloop = castPtr userdata
+           PA.pa_threaded_mainloop_accept mainloop
+           PA.pa_threaded_mainloop_unlock mainloop
            runReaderT (cont results) pa
          else do
            x' <- peek x
            modifyIORef ref (x' :)
-    withPA pa $ \mainloop context -> call context callback nullPtr
+    withMainLoop pa $ \mainloop ->
+      withContext pa $ \context -> do
+        PA.pa_threaded_mainloop_lock mainloop
+        call context callback nullPtr
     return ()
+
+withMainLoop :: PulseAudio -> (Ptr PA.ThreadedMainLoop -> IO a) -> IO a
+withMainLoop pa f = withForeignPtr (paMainLoop pa) f
+
+withContext :: PulseAudio -> (Ptr PA.Context -> IO a) -> IO a
+withContext pa f = withForeignPtr (paContext pa) f
 
 pulseListSinks :: PulseM [SinkInfo]
 pulseListSinks = map mkSinkInfo <$> queryList PA.pa_sink_info_cb PA.pa_context_get_sink_info_list

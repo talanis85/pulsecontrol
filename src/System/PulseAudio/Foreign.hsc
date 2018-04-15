@@ -113,6 +113,9 @@ foreign import ccall "pa_sw_volume_from_dB" pa_sw_volume_from_dB
 foreign import ccall "pa_sw_volume_to_dB" pa_sw_volume_to_dB
   :: Volume -> Double
 
+foreign import ccall "pa_threaded_mainloop_accept" pa_threaded_mainloop_accept
+  :: Ptr ThreadedMainLoop -> IO ()
+
 foreign import ccall "pa_threaded_mainloop_get_api" pa_threaded_mainloop_get_api
   :: Ptr ThreadedMainLoop -> IO (Ptr MainLoopApi)
 
