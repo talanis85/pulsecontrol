@@ -7,13 +7,18 @@ import System.PulseAudio
 main :: IO ()
 main = do
   pa <- pulseInit "pulsetest"
-  result <- runPulse pa $ do
+  result <- flip runPulseM pa $ do
     pulseConnect (Just "/run/user/1000/pulse/native")
+    waitForConnection
     sinks <- pulseListSinks
+    -- let sinks = [] :: [SinkInfo]
     sinkInputs <- pulseListSinkInputs
+    -- let sinkInputs = [] :: [SinkInputInfo]
     sources <- pulseListSources
+    -- let sources = [] :: [SourceInfo]
     sourceOutputs <- pulseListSourceOutputs
-    pulseSetSinkVolume (mkSinkIndex 0) ([DbVolume 0, DbVolume 0])
+    -- let sourceOutputs = [] :: [SourceOutputInfo]
+    -- pulseSetSinkVolume (mkSinkIndex 0) ([DbVolume 0, DbVolume 0])
     return (sinks, sinkInputs, sources, sourceOutputs)
   {-
   result <- runPulseSync "pulsetest" $ do
