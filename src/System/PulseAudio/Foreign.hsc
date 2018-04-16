@@ -493,7 +493,7 @@ data SinkInputInfo = SinkInputInfo
   , siiVolume :: CVolume
   , siiBufferUsec :: USec
   , siiSinkUsec :: USec
-  , siiResampleMethod :: String
+  , siiResampleMethod :: Maybe String
   , siiDriver :: String
   , siiMute :: Bool
   , siiProplist :: Ptr Proplist
@@ -506,25 +506,27 @@ data SinkInputInfo = SinkInputInfo
 instance Storable SinkInputInfo where
   sizeOf _ = #{size struct pa_sink_input_info}
   alignment _ = #{alignment struct pa_sink_input_info}
-  peek p = SinkInputInfo
-    <$> #{peek struct pa_sink_input_info, index} p
-    <*> (peekCString =<< #{peek struct pa_sink_input_info, name} p)
-    <*> #{peek struct pa_sink_input_info, owner_module} p
-    <*> #{peek struct pa_sink_input_info, client} p
-    <*> #{peek struct pa_sink_input_info, sink} p
-    <*> #{peek struct pa_sink_input_info, sample_spec} p
-    <*> #{peek struct pa_sink_input_info, channel_map} p
-    <*> #{peek struct pa_sink_input_info, volume} p
-    <*> #{peek struct pa_sink_input_info, buffer_usec} p
-    <*> #{peek struct pa_sink_input_info, sink_usec} p
-    <*> (peekCString =<< #{peek struct pa_sink_input_info, resample_method} p)
-    <*> (peekCString =<< #{peek struct pa_sink_input_info, driver} p)
-    <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, mute} p))
-    <*> #{peek struct pa_sink_input_info, proplist} p
-    <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, corked} p))
-    <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, has_volume} p))
-    <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, volume_writable} p))
-    <*> #{peek struct pa_sink_input_info, format} p
+  peek p = do
+    hasVolume <- #{peek struct pa_sink_input_info, has_volume} p
+    SinkInputInfo
+      <$> #{peek struct pa_sink_input_info, index} p
+      <*> (peekCString =<< #{peek struct pa_sink_input_info, name} p)
+      <*> #{peek struct pa_sink_input_info, owner_module} p
+      <*> #{peek struct pa_sink_input_info, client} p
+      <*> #{peek struct pa_sink_input_info, sink} p
+      <*> #{peek struct pa_sink_input_info, sample_spec} p
+      <*> #{peek struct pa_sink_input_info, channel_map} p
+      <*> (if hasVolume then #{peek struct pa_sink_input_info, volume} p else pure (CVolume []))
+      <*> #{peek struct pa_sink_input_info, buffer_usec} p
+      <*> #{peek struct pa_sink_input_info, sink_usec} p
+      <*> (peekCStringMaybe =<< #{peek struct pa_sink_input_info, resample_method} p)
+      <*> (peekCString =<< #{peek struct pa_sink_input_info, driver} p)
+      <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, mute} p))
+      <*> #{peek struct pa_sink_input_info, proplist} p
+      <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, corked} p))
+      <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, has_volume} p))
+      <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_sink_input_info, volume_writable} p))
+      <*> #{peek struct pa_sink_input_info, format} p
   poke _ (SinkInputInfo {..}) = error "PA: Currently no sink_input_info poke"
 
 -- pa_source_info
@@ -603,7 +605,7 @@ data SourceOutputInfo = SourceOutputInfo
   , sooVolume :: CVolume
   , sooBufferUsec :: USec
   , sooSourceUsec :: USec
-  , sooResampleMethod :: String
+  , sooResampleMethod :: Maybe String
   , sooDriver :: String
   , sooMute :: Bool
   , sooProplist :: Ptr Proplist
@@ -627,7 +629,7 @@ instance Storable SourceOutputInfo where
     <*> #{peek struct pa_source_output_info, volume} p
     <*> #{peek struct pa_source_output_info, buffer_usec} p
     <*> #{peek struct pa_source_output_info, source_usec} p
-    <*> (peekCString =<< #{peek struct pa_source_output_info, resample_method} p)
+    <*> (peekCStringMaybe =<< #{peek struct pa_source_output_info, resample_method} p)
     <*> (peekCString =<< #{peek struct pa_source_output_info, driver} p)
     <*> ((/= (0 :: CInt)) <$> (#{peek struct pa_source_output_info, mute} p))
     <*> #{peek struct pa_source_output_info, proplist} p
