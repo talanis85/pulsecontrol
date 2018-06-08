@@ -14,6 +14,7 @@ module System.PulseAudio
   , pulseListSourceOutputs
   , DbVolume (..)
   , pulseSetSinkVolume
+  , pulseSetSinkInputVolume
   , pulseWaitForChange
   , mkSinkIndex
   , mkSourceIndex
@@ -55,53 +56,61 @@ runPulseM :: PulseM a -> PulseAudio -> IO (Either String a)
 runPulseM m pa = runReaderT (runExceptT m) pa
 
 data SinkInfo = SinkInfo
-  { siMute :: Bool
+  { siIndex :: PA.SinkIndex
+  , siMute :: Bool
   , siName :: String
   , siVolume :: [DbVolume]
   } deriving (Show, Eq)
 
 mkSinkInfo :: PA.SinkInfo -> SinkInfo
 mkSinkInfo si = SinkInfo
-  { siMute = PA.siMute si
+  { siIndex = PA.siIndex si
+  , siMute = PA.siMute si
   , siName = PA.siName si
   , siVolume = map volumeToDbVolume (PA.cvValues (PA.siVolume si))
   }
 
 data SourceInfo = SourceInfo
-  { soMute :: Bool
+  { soIndex :: PA.SourceIndex
+  , soMute :: Bool
   , soName :: String
   , soVolume :: [DbVolume]
   } deriving (Show, Eq)
 
 mkSourceInfo :: PA.SourceInfo -> SourceInfo
 mkSourceInfo so = SourceInfo
-  { soMute = PA.soMute so
+  { soIndex = PA.soIndex so
+  , soMute = PA.soMute so
   , soName = PA.soName so
   , soVolume = map volumeToDbVolume (PA.cvValues (PA.soVolume so))
   }
 
 data SinkInputInfo = SinkInputInfo
-  { siiMute :: Bool
+  { siiIndex :: PA.SinkInputIndex
+  , siiMute :: Bool
   , siiName :: String
   , siiVolume :: [DbVolume]
   } deriving (Show, Eq)
 
 mkSinkInputInfo :: PA.SinkInputInfo -> SinkInputInfo
 mkSinkInputInfo sii = SinkInputInfo
-  { siiMute = PA.siiMute sii
+  { siiIndex = PA.siiIndex sii
+  , siiMute = PA.siiMute sii
   , siiName = PA.siiName sii
   , siiVolume = map volumeToDbVolume (PA.cvValues (PA.siiVolume sii))
   }
 
 data SourceOutputInfo = SourceOutputInfo
-  { sooMute :: Bool
+  { sooIndex :: PA.SourceOutputIndex
+  , sooMute :: Bool
   , sooName :: String
   , sooVolume :: [DbVolume]
   } deriving (Show, Eq)
 
 mkSourceOutputInfo :: PA.SourceOutputInfo -> SourceOutputInfo
 mkSourceOutputInfo soo = SourceOutputInfo
-  { sooMute = PA.sooMute soo
+  { sooIndex = PA.sooIndex soo
+  , sooMute = PA.sooMute soo
   , sooName = PA.sooName soo
   , sooVolume = map volumeToDbVolume (PA.cvValues (PA.sooVolume soo))
   }
@@ -242,6 +251,9 @@ pulseListSourceOutputs = map mkSourceOutputInfo <$> queryList PA.pa_source_outpu
 newtype DbVolume = DbVolume { getDbVolume :: Double }
   deriving (Ord, Eq, Num, Fractional, RealFrac, Real)
 
+instance Read DbVolume where
+  readsPrec p = fmap (fmap (\(a,b) -> (DbVolume a, b))) (readsPrec p)
+
 instance Show DbVolume where
   show (DbVolume x) = show x ++ " dB"
 
@@ -268,6 +280,27 @@ pulseSetSinkVolume index dbVolumes = do
       PA.pa_threaded_mainloop_signal mainloop 0
     withPA pa $ \mainloop context -> do
       op <- PA.pa_context_set_sink_volume_by_index context index pCVolume callback (castPtr mainloop)
+      waitForCompletion mainloop done
+      PA.pa_operation_unref op
+    return ()
+
+pulseSetSinkInputVolume :: PA.SinkInputIndex -> [DbVolume] -> PulseM ()
+pulseSetSinkInputVolume index dbVolumes = do
+  liftIO $ traceIO "pulseSetSinkVolume"
+  pa <- ask
+  liftIO $ do
+    pCVolume <- malloc
+    let cVolume = PA.CVolume (map dbVolumeToVolume dbVolumes)
+    poke pCVolume cVolume
+    done <- newEmptyMVar
+    callback <- PA.pa_context_success_cb $ \ctx success userdata -> do
+      let mainloop = castPtr userdata
+      traceIO "pulseSetSinkInputVolume - callback"
+      free pCVolume
+      putMVar done ()
+      PA.pa_threaded_mainloop_signal mainloop 0
+    withPA pa $ \mainloop context -> do
+      op <- PA.pa_context_set_sink_input_volume context index pCVolume callback (castPtr mainloop)
       waitForCompletion mainloop done
       PA.pa_operation_unref op
     return ()

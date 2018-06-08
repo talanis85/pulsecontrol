@@ -74,6 +74,9 @@ foreign import ccall "pa_context_set_subscribe_callback" pa_context_set_subscrib
 foreign import ccall "pa_context_set_sink_volume_by_index" pa_context_set_sink_volume_by_index
   :: Ptr Context -> SinkIndex -> Ptr CVolume -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
 
+foreign import ccall "pa_context_set_sink_input_volume" pa_context_set_sink_input_volume
+  :: Ptr Context -> SinkInputIndex -> Ptr CVolume -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
+
 foreign import ccall "pa_context_set_source_volume_by_index" pa_context_set_source_volume_by_index
   :: Ptr Context -> SourceIndex -> Ptr CVolume -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
 
@@ -180,10 +183,28 @@ foreign import ccall "wrapper" pa_source_output_info_cb
 -- Newtypes -------------------------------------------------------------------
 
 newtype SinkIndex = SinkIndex { getSinkIndex :: Word32 }
-  deriving (Show, Storable)
+  deriving (Eq, Ord, Show, Storable)
+
+instance Read SinkIndex where
+  readsPrec p = fmap (fmap (\(a,b) -> (SinkIndex a, b))) (readsPrec p)
 
 newtype SourceIndex = SourceIndex { getSourceIndex :: Word32 }
-  deriving (Show, Storable)
+  deriving (Eq, Ord, Show, Storable)
+
+instance Read SourceIndex where
+  readsPrec p = fmap (fmap (\(a,b) -> (SourceIndex a, b))) (readsPrec p)
+
+newtype SinkInputIndex = SinkInputIndex { getSinkInputIndex :: Word32 }
+  deriving (Eq, Ord, Show, Storable)
+
+instance Read SinkInputIndex where
+  readsPrec p = fmap (fmap (\(a,b) -> (SinkInputIndex a, b))) (readsPrec p)
+
+newtype SourceOutputIndex = SourceOutputIndex { getSourceOutputIndex :: Word32 }
+  deriving (Eq, Ord, Show, Storable)
+
+instance Read SourceOutputIndex where
+  readsPrec p = fmap (fmap (\(a,b) -> (SourceOutputIndex a, b))) (readsPrec p)
 
 -- Typedefs -------------------------------------------------------------------
 
@@ -492,7 +513,7 @@ instance Storable SinkInfo where
 -- pa_sink_input_info
 
 data SinkInputInfo = SinkInputInfo
-  { siiIndex :: Word32
+  { siiIndex :: SinkInputIndex
   , siiName :: String
   , siiOwnerModule :: Word32
   , siiClient :: Word32
@@ -604,7 +625,7 @@ instance Storable SourceInfo where
 -- pa_source_output_info
 
 data SourceOutputInfo = SourceOutputInfo
-  { sooIndex :: Word32
+  { sooIndex :: SourceOutputIndex
   , sooName :: String
   , sooOwnerModule :: Word32
   , sooClient :: Word32

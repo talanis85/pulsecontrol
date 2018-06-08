@@ -3,13 +3,21 @@ module Main where
 import Control.Concurrent
 import Control.Monad.Trans
 import System.PulseAudio
+import System.Environment
 
 main :: IO ()
 main = do
+  args <- getArgs
   pa <- pulseInit "pulsetest"
+
   result <- flip runPulseM pa $ do
     pulseConnect (Just "/run/user/1000/pulse/native")
     waitForConnection
+
+    case args of
+      [index, volume] -> pulseSetSinkInputVolume (read index) [read volume, read volume]
+      _ -> return ()
+
     sinks <- pulseListSinks
     -- let sinks = [] :: [SinkInfo]
     sinkInputs <- pulseListSinkInputs
