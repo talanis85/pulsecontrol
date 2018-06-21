@@ -188,11 +188,15 @@ newtype SinkIndex = SinkIndex { getSinkIndex :: Word32 }
 instance Read SinkIndex where
   readsPrec p = fmap (fmap (\(a,b) -> (SinkIndex a, b))) (readsPrec p)
 
+defaultSinkIndex = SinkIndex 0
+
 newtype SourceIndex = SourceIndex { getSourceIndex :: Word32 }
   deriving (Eq, Ord, Show, Storable)
 
 instance Read SourceIndex where
   readsPrec p = fmap (fmap (\(a,b) -> (SourceIndex a, b))) (readsPrec p)
+
+defaultSourceIndex = SourceIndex 0
 
 newtype SinkInputIndex = SinkInputIndex { getSinkInputIndex :: Word32 }
   deriving (Eq, Ord, Show, Storable)
@@ -200,11 +204,15 @@ newtype SinkInputIndex = SinkInputIndex { getSinkInputIndex :: Word32 }
 instance Read SinkInputIndex where
   readsPrec p = fmap (fmap (\(a,b) -> (SinkInputIndex a, b))) (readsPrec p)
 
+defaultSinkInputIndex = SinkInputIndex 0
+
 newtype SourceOutputIndex = SourceOutputIndex { getSourceOutputIndex :: Word32 }
   deriving (Eq, Ord, Show, Storable)
 
 instance Read SourceOutputIndex where
   readsPrec p = fmap (fmap (\(a,b) -> (SourceOutputIndex a, b))) (readsPrec p)
+
+defaultSourceOutputIndex = SourceOutputIndex 0
 
 -- Typedefs -------------------------------------------------------------------
 
