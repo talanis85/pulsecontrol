@@ -205,12 +205,17 @@ queryList mkCallback call = contErrT $ \cont exit -> do
          then do
            r <- readIORef result
            runReaderT (cont r) pa
-         else do
-           x' <- peek x
-           modifyIORef result (x' :)
+         else
+           if eol < 0
+              then runReaderT (exit "queryList: unknown error") pa
+              else do
+                x' <- peek x
+                modifyIORef result (x' :)
     withPA pa $ \mainloop context -> do
       op <- call context callback (castPtr mainloop)
-      PA.pa_operation_unref op
+      if op == nullPtr
+         then runReaderT (exit "queryList: null operation") pa
+         else PA.pa_operation_unref op
 
 pulseListSinks :: PulseM [SinkInfo]
 pulseListSinks = map mkSinkInfo <$> queryList PA.pa_sink_info_cb PA.pa_context_get_sink_info_list
@@ -251,7 +256,9 @@ pulseSetSinkVolume index dbVolumes = contErrT $ \cont exit -> do
       runReaderT (cont ()) pa
     withPA pa $ \mainloop context -> do
       op <- PA.pa_context_set_sink_volume_by_index context index pCVolume callback nullPtr
-      PA.pa_operation_unref op
+      if op == nullPtr
+         then runReaderT (exit "pulseSetSinkVolume: null operation") pa
+         else PA.pa_operation_unref op
     return ()
 
 pulseSetSinkInputVolume :: PA.SinkInputIndex -> [DbVolume] -> PulseM ()
@@ -266,7 +273,9 @@ pulseSetSinkInputVolume index dbVolumes = contErrT $ \cont exit -> do
       runReaderT (cont ()) pa
     withPA pa $ \mainloop context -> do
       op <- PA.pa_context_set_sink_input_volume context index pCVolume callback (castPtr mainloop)
-      PA.pa_operation_unref op
+      if op == nullPtr
+         then runReaderT (exit "pulseSetSinkInputVolume: null operation") pa
+         else PA.pa_operation_unref op
     return ()
 
 mkSinkIndex :: Int -> PA.SinkIndex
