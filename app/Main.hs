@@ -8,7 +8,8 @@ import System.Environment
 main :: IO ()
 main = do
   args <- getArgs
-  result <- runPulseM "pulsetest" $ do
+  pa <- initPulse "pulsetest"
+  result <- runPulseM pa $ do
     pulseConnect (Just "/run/user/1000/pulse/native")
 
     case args of

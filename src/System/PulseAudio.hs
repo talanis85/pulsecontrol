@@ -3,6 +3,7 @@
 module System.PulseAudio
   ( PulseAudio
   , PulseM
+  , initPulse
   , runPulseM
   , pulseConnect
   , pulseListSinks
@@ -34,6 +35,7 @@ import Control.Monad.ContErr
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.IORef
+import Data.Time.Clock.POSIX
 import Foreign
 import Foreign.C.Types
 import Foreign.C.String
@@ -51,8 +53,8 @@ data PulseAudio = PulseAudio
 
 type PulseM a = ContErrT String () (ReaderT PulseAudio IO) a
 
-runPulseM :: String -> PulseM a -> IO (Either String a)
-runPulseM name m = do
+initPulse :: String -> IO PulseAudio
+initPulse name = do
   mainloop <- PA.pa_mainloop_new
   mainloopForeign <- newForeignPtr PA.pa_mainloop_free_p mainloop
   mainloopApi <- PA.pa_mainloop_get_api mainloop
@@ -65,21 +67,30 @@ runPulseM name m = do
         , paMainLoop = mainloopForeign
         }
 
+  return pa
+
+runPulseM :: PulseAudio -> PulseM a -> IO (Either String a)
+runPulseM pa m = do
   result <- newEmptyMVar
-  let onError e = liftIO $ do
-        putMVar result $ Left e
-        withPA pa $ \mainloop context -> do
-          PA.pa_context_disconnect context
-          PA.pa_mainloop_quit mainloop 0
-      onResult r = liftIO $ do
-        putMVar result $ Right r
-        withPA pa $ \mainloop context -> do
-          PA.pa_context_disconnect context
-          PA.pa_mainloop_quit mainloop 0
+
+  let onError e = liftIO $ putMVar result $ Left e
+      onResult r = liftIO $ putMVar result $ Right r
+
+  let timeout = 5
+  time <- getPOSIXTime
+  let loop = do
+        time' <- getPOSIXTime
+        if realToFrac (time' - time) > timeout
+           then return (Left "timeout")
+           else do
+             withPA pa $ \mainloop context -> PA.pa_mainloop_iterate mainloop False nullPtr
+             result' <- tryTakeMVar result
+             case result' of
+               Just r -> return r
+               Nothing -> loop
 
   runReaderT (runContErrT m onResult onError) pa
-  PA.pa_mainloop_run mainloop nullPtr
-  takeMVar result
+  loop
 
 data SinkInfo = SinkInfo
   { siIndex :: PA.SinkIndex

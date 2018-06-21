@@ -28,6 +28,7 @@ library
   build-depends:
       base >= 4.7 && < 5
     , mtl
+    , time
   build-tools:
       hsc2hs
   exposed-modules:

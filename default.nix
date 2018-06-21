@@ -1,11 +1,11 @@
-{ mkDerivation, base, libpulseaudio, mtl, stdenv }:
+{ mkDerivation, base, libpulseaudio, mtl, stdenv, time }:
 mkDerivation {
   pname = "pulseaudio";
   version = "0.1.0.0";
   src = ./.;
   isLibrary = true;
   isExecutable = true;
-  libraryHaskellDepends = [ base mtl ];
+  libraryHaskellDepends = [ base mtl time ];
   librarySystemDepends = [ libpulseaudio ];
   executableHaskellDepends = [ base mtl ];
   testHaskellDepends = [ base mtl ];
