@@ -73,8 +73,8 @@ runPulseM :: PulseAudio -> PulseM a -> IO (Either String a)
 runPulseM pa m = do
   result <- newEmptyMVar
 
-  let onError e = liftIO $ putMVar result $ Left e
-      onResult r = liftIO $ putMVar result $ Right r
+  let onError e = fmap (const ()) $ liftIO $ tryPutMVar result $ Left e
+      onResult r = fmap (const ()) $ liftIO $ tryPutMVar result $ Right r
 
   let timeout = 5
   time <- getPOSIXTime
@@ -207,14 +207,18 @@ queryList mkCallback call = contErrT $ \cont exit -> do
            runReaderT (cont r) pa
          else
            if eol < 0
-              then runReaderT (exit "queryList: unknown error") pa
+              then do
+                err <- getContextError ctx
+                runReaderT (exit ("queryList: " ++ err)) pa
               else do
                 x' <- peek x
                 modifyIORef result (x' :)
     withPA pa $ \mainloop context -> do
       op <- call context callback (castPtr mainloop)
       if op == nullPtr
-         then runReaderT (exit "queryList: null operation") pa
+         then do
+           err <- getContextError context
+           runReaderT (exit ("queryList: " ++ err)) pa
          else PA.pa_operation_unref op
 
 pulseListSinks :: PulseM [SinkInfo]
@@ -257,7 +261,9 @@ pulseSetSinkVolume index dbVolumes = contErrT $ \cont exit -> do
     withPA pa $ \mainloop context -> do
       op <- PA.pa_context_set_sink_volume_by_index context index pCVolume callback nullPtr
       if op == nullPtr
-         then runReaderT (exit "pulseSetSinkVolume: null operation") pa
+         then do
+           err <- getContextError context
+           runReaderT (exit ("pulseSetSinkVolume: " ++ err)) pa
          else PA.pa_operation_unref op
     return ()
 
@@ -274,7 +280,9 @@ pulseSetSinkInputVolume index dbVolumes = contErrT $ \cont exit -> do
     withPA pa $ \mainloop context -> do
       op <- PA.pa_context_set_sink_input_volume context index pCVolume callback (castPtr mainloop)
       if op == nullPtr
-         then runReaderT (exit "pulseSetSinkInputVolume: null operation") pa
+         then do
+           err <- getContextError context
+           runReaderT (exit ("pulseSetSinkInputVolume: " ++ err)) pa
          else PA.pa_operation_unref op
     return ()
 
