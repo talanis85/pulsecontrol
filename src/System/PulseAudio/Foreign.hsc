@@ -86,6 +86,12 @@ foreign import ccall "pa_context_set_state_callback" pa_context_set_state_callba
 foreign import ccall "pa_context_subscribe" pa_context_subscribe
   :: Ptr Context -> SubscriptionMask -> FunPtr ContextSuccessCb -> Ptr () -> IO (Ptr Operation)
 
+foreign import ccall "pa_context_unref" pa_context_unref
+  :: Ptr Context -> IO ()
+
+foreign import ccall "&pa_context_unref" pa_context_unref_p
+  :: FunPtr (Ptr Context -> IO ())
+
 foreign import ccall "pa_mainloop_new" pa_mainloop_new
   :: IO (Ptr MainLoop)
 

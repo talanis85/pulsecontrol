@@ -60,7 +60,8 @@ initPulse socket name = do
   mainloopApi <- PA.pa_mainloop_get_api mainloop
 
   context <- withCString name (PA.pa_context_new mainloopApi)
-  contextForeign <- newForeignPtr_ context -- todo: do we need a finalizer here?
+  -- contextForeign <- newForeignPtr PA.pa_context_unref_p context -- segfaults
+  contextForeign <- newForeignPtr_ context
 
   contextRef <- newIORef contextForeign
 
@@ -84,7 +85,8 @@ resetContext = contErrT $ \cont exit -> do
   liftIO $ withForeignPtr (paMainLoop pa) $ \mainloop -> do
     mainloopApi <- PA.pa_mainloop_get_api mainloop
     context <- withCString (paName pa) (PA.pa_context_new mainloopApi)
-    contextForeign <- newForeignPtr_ context -- todo: do we need a finalizer here?
+    -- contextForeign <- newForeignPtr PA.pa_context_unref_p context -- segfaults
+    contextForeign <- newForeignPtr_ context
     writeIORef (paContext pa) contextForeign
   cont ()
 
