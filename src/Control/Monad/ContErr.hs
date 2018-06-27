@@ -3,6 +3,7 @@ module Control.Monad.ContErr
   ( ContErrT
   , runContErrT
   , contErrT
+  , throwContErrT
   ) where
 
 import Control.Monad.Cont
@@ -24,3 +25,6 @@ contErrT f = ContErrT $ ContT $ \cont -> do
 
 runContErrT :: (Monad m) => ContErrT e r m a -> (a -> m r) -> (e -> m r) -> m r
 runContErrT m onResult onExit = runReaderT (runContT (unContErrT m) (lift . onResult)) onExit
+
+throwContErrT :: (Monad m) => e -> ContErrT e r m a
+throwContErrT e = contErrT $ \cont exit -> exit e

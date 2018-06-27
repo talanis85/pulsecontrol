@@ -5,7 +5,6 @@ module System.PulseAudio
   , PulseM
   , initPulse
   , runPulseM
-  , pulseConnect
   , pulseListSinks
   , pulseListSinkInputs
   , pulseListSources
@@ -13,6 +12,7 @@ module System.PulseAudio
   , DbVolume (..)
   , pulseSetSinkVolume
   , pulseSetSinkInputVolume
+  , pulseState
   , mkSinkIndex
   , mkSourceIndex
   , SinkInfo (..)
@@ -44,17 +44,17 @@ import System.PulseAudio.Foreign ( SinkIndex, SourceIndex, SinkInputIndex, Sourc
                                  , defaultSinkIndex, defaultSourceIndex
                                  , defaultSinkInputIndex, defaultSourceOutputIndex )
 
-import Debug.Trace
-
 data PulseAudio = PulseAudio
-  { paContext :: ForeignPtr PA.Context
+  { paContext :: IORef (ForeignPtr PA.Context)
   , paMainLoop :: ForeignPtr PA.MainLoop
+  , paSocket :: Maybe String
+  , paName :: String
   }
 
 type PulseM a = ContErrT String () (ReaderT PulseAudio IO) a
 
-initPulse :: String -> IO PulseAudio
-initPulse name = do
+initPulse :: Maybe String -> String -> IO PulseAudio
+initPulse socket name = do
   mainloop <- PA.pa_mainloop_new
   mainloopForeign <- newForeignPtr PA.pa_mainloop_free_p mainloop
   mainloopApi <- PA.pa_mainloop_get_api mainloop
@@ -62,12 +62,31 @@ initPulse name = do
   context <- withCString name (PA.pa_context_new mainloopApi)
   contextForeign <- newForeignPtr_ context -- todo: do we need a finalizer here?
 
+  contextRef <- newIORef contextForeign
+
   let pa = PulseAudio
-        { paContext = contextForeign
+        { paContext = contextRef
         , paMainLoop = mainloopForeign
+        , paSocket = socket
+        , paName = name
         }
 
   return pa
+
+pulseM :: ((a -> IO ()) -> (String -> IO ()) -> ReaderT PulseAudio IO ()) -> PulseM a
+pulseM f = do
+  pa <- lift ask
+  contErrT $ \cont exit -> f (flip runReaderT pa . cont) (flip runReaderT pa . exit)
+
+resetContext :: PulseM ()
+resetContext = contErrT $ \cont exit -> do
+  pa <- ask
+  liftIO $ withForeignPtr (paMainLoop pa) $ \mainloop -> do
+    mainloopApi <- PA.pa_mainloop_get_api mainloop
+    context <- withCString (paName pa) (PA.pa_context_new mainloopApi)
+    contextForeign <- newForeignPtr_ context -- todo: do we need a finalizer here?
+    writeIORef (paContext pa) contextForeign
+  cont ()
 
 runPulseM :: PulseAudio -> PulseM a -> IO (Either String a)
 runPulseM pa m = do
@@ -76,18 +95,24 @@ runPulseM pa m = do
   let onError e = fmap (const ()) $ liftIO $ tryPutMVar result $ Left e
       onResult r = fmap (const ()) $ liftIO $ tryPutMVar result $ Right r
 
-  let timeout = 5
+  let timeout = 1000
   time <- getPOSIXTime
   let loop = do
         time' <- getPOSIXTime
         if realToFrac (time' - time) > timeout
            then return (Left "timeout")
            else do
-             withPA pa $ \mainloop context -> PA.pa_mainloop_iterate mainloop False nullPtr
+             state <- withForeignPtr (paMainLoop pa) $ \mainloop -> do
+               PA.pa_mainloop_iterate mainloop False nullPtr
+               contextForeign <- readIORef (paContext pa)
+               withForeignPtr contextForeign PA.pa_context_get_state
              result' <- tryTakeMVar result
              case result' of
                Just r -> return r
-               Nothing -> loop
+               Nothing ->
+                 if state `elem` [PA.contextFailed, PA.contextTerminated]
+                    then return (Left "connection lost")
+                    else loop
 
   runReaderT (runContErrT m onResult onError) pa
   loop
@@ -160,14 +185,29 @@ getContextError ctx = do
 getStrError :: PA.Error -> IO String
 getStrError err = peekCString (PA.pa_strerror err)
 
-withPA :: PulseAudio -> (Ptr PA.MainLoop -> Ptr PA.Context -> IO a) -> IO a
-withPA pa f = withForeignPtr (paMainLoop pa) $ \mainloop ->
-  withForeignPtr (paContext pa) $ \context ->
-    f mainloop context
+getConnectedContext :: PulseM (ForeignPtr PA.Context)
+getConnectedContext = do
+  pa <- lift ask
+  contextForeign <- liftIO $ readIORef (paContext pa)
+  state <- liftIO $ withForeignPtr contextForeign $ \context -> PA.pa_context_get_state context
+  if state == PA.contextReady
+  then
+    return contextForeign
+  else do
+    resetContext
+    pulseConnect
+    contextForeign <- liftIO $ readIORef (paContext pa)
+    state <- liftIO $ withForeignPtr contextForeign $ \context -> PA.pa_context_get_state context
+    if state == PA.contextReady
+    then
+      liftIO $ readIORef (paContext pa)
+    else
+      throwContErrT ("Could not connect. State is: " ++ show state)
 
-pulseConnect :: Maybe String -> PulseM ()
-pulseConnect server = contErrT $ \cont exit -> do
+pulseConnect :: PulseM ()
+pulseConnect = contErrT $ \cont exit -> do
   pa <- ask
+  contextForeign <- liftIO $ readIORef (paContext pa)
   err <- liftIO $ do
     callback <- PA.pa_context_notify_cb $ \ctx userdata -> do
       let handler s | s == PA.contextReady = do
@@ -180,9 +220,9 @@ pulseConnect server = contErrT $ \cont exit -> do
                     | otherwise = return ()
       s <- liftIO $ PA.pa_context_get_state ctx
       handler s
-    withPA pa $ \mainloop context -> do
+    withForeignPtr contextForeign $ \context -> do
       PA.pa_context_set_state_callback context callback nullPtr
-      case server of
+      case (paSocket pa) of
         Just server' -> withCString server' $ \cServer ->
           PA.pa_context_connect context cServer PA.contextNoflags nullPtr
         Nothing ->
@@ -191,34 +231,41 @@ pulseConnect server = contErrT $ \cont exit -> do
   if PA.isError err
      then do
        errstr <- liftIO (getStrError err)
-       liftIO $ withPA pa $ \mainloop context ->
+       liftIO $ withForeignPtr contextForeign $ \context ->
          PA.pa_context_set_state_callback context nullFunPtr nullPtr
        exit ("pa_context_connect: " ++ errstr)
      else return ()
 
-queryList mkCallback call = contErrT $ \cont exit -> do
+pulseState :: PulseM PA.ContextState
+pulseState = do
+  pa <- lift ask
+  contextForeign <- liftIO $ readIORef (paContext pa)
+  liftIO $ withForeignPtr contextForeign PA.pa_context_get_state
+
+queryList mkCallback call = do
   result <- liftIO $ newIORef []
-  pa <- ask
-  liftIO $ do
-    callback <- mkCallback $ \ctx x eol userdata -> do
+  contextForeign <- getConnectedContext
+  pulseM $ \cont exit -> do
+    callback <- liftIO $ mkCallback $ \ctx x eol userdata -> do
       if eol > 0
          then do
            r <- readIORef result
-           runReaderT (cont r) pa
+           cont r
          else
            if eol < 0
               then do
                 err <- getContextError ctx
-                runReaderT (exit ("queryList: " ++ err)) pa
+                exit ("queryList: " ++ err)
               else do
                 x' <- peek x
                 modifyIORef result (x' :)
-    withPA pa $ \mainloop context -> do
-      op <- call context callback (castPtr mainloop)
+    liftIO $ withForeignPtr contextForeign $ \context -> do
+      op <- call context callback nullPtr
+      err <- getContextError context
       if op == nullPtr
          then do
            err <- getContextError context
-           runReaderT (exit ("queryList: " ++ err)) pa
+           exit ("queryList: " ++ err)
          else PA.pa_operation_unref op
 
 pulseListSinks :: PulseM [SinkInfo]
@@ -249,42 +296,44 @@ volumeToDbVolume :: PA.Volume -> DbVolume
 volumeToDbVolume vol = DbVolume (PA.pa_sw_volume_to_dB vol)
 
 pulseSetSinkVolume :: PA.SinkIndex -> [DbVolume] -> PulseM ()
-pulseSetSinkVolume index dbVolumes = contErrT $ \cont exit -> do
-  pa <- ask
-  liftIO $ do
-    pCVolume <- malloc
-    let cVolume = PA.CVolume (map dbVolumeToVolume dbVolumes)
-    poke pCVolume cVolume
-    callback <- PA.pa_context_success_cb $ \ctx success userdata -> do
+pulseSetSinkVolume index dbVolumes = do
+  pa <- lift ask
+  pCVolume <- liftIO malloc
+  let cVolume = PA.CVolume (map dbVolumeToVolume dbVolumes)
+  liftIO $ poke pCVolume cVolume
+  contextForeign <- getConnectedContext
+  pulseM $ \cont exit -> do
+    callback <- liftIO $ PA.pa_context_success_cb $ \ctx success userdata -> do
       free pCVolume
-      runReaderT (cont ()) pa
-    withPA pa $ \mainloop context -> do
+      cont ()
+    liftIO $ withForeignPtr contextForeign $ \context -> do
       op <- PA.pa_context_set_sink_volume_by_index context index pCVolume callback nullPtr
       if op == nullPtr
          then do
            err <- getContextError context
-           runReaderT (exit ("pulseSetSinkVolume: " ++ err)) pa
+           exit ("pulseSetSinkVolume: " ++ err)
          else PA.pa_operation_unref op
-    return ()
+  return ()
 
 pulseSetSinkInputVolume :: PA.SinkInputIndex -> [DbVolume] -> PulseM ()
-pulseSetSinkInputVolume index dbVolumes = contErrT $ \cont exit -> do
-  pa <- ask
-  liftIO $ do
-    pCVolume <- malloc
-    let cVolume = PA.CVolume (map dbVolumeToVolume dbVolumes)
-    poke pCVolume cVolume
-    callback <- PA.pa_context_success_cb $ \ctx success userdata -> do
+pulseSetSinkInputVolume index dbVolumes = do
+  pa <- lift ask
+  pCVolume <- liftIO malloc
+  let cVolume = PA.CVolume (map dbVolumeToVolume dbVolumes)
+  liftIO $ poke pCVolume cVolume
+  contextForeign <- getConnectedContext
+  pulseM $ \cont exit -> do
+    callback <- liftIO $ PA.pa_context_success_cb $ \ctx success userdata -> do
       free pCVolume
-      runReaderT (cont ()) pa
-    withPA pa $ \mainloop context -> do
-      op <- PA.pa_context_set_sink_input_volume context index pCVolume callback (castPtr mainloop)
+      cont ()
+    liftIO $ withForeignPtr contextForeign $ \context -> do
+      op <- PA.pa_context_set_sink_input_volume context index pCVolume callback nullPtr
       if op == nullPtr
          then do
            err <- getContextError context
-           runReaderT (exit ("pulseSetSinkInputVolume: " ++ err)) pa
+           exit ("pulseSetSinkInputVolume: " ++ err)
          else PA.pa_operation_unref op
-    return ()
+  return ()
 
 mkSinkIndex :: Int -> PA.SinkIndex
 mkSinkIndex = PA.SinkIndex . fromIntegral
