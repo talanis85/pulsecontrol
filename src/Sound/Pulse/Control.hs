@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module System.PulseAudio
+module Sound.Pulse.Control
   ( PulseAudio
   , PulseM
   , initPulse
@@ -39,10 +39,10 @@ import Data.Time.Clock.POSIX
 import Foreign
 import Foreign.C.Types
 import Foreign.C.String
-import qualified System.PulseAudio.Foreign as PA
-import System.PulseAudio.Foreign ( SinkIndex, SourceIndex, SinkInputIndex, SourceOutputIndex
-                                 , defaultSinkIndex, defaultSourceIndex
-                                 , defaultSinkInputIndex, defaultSourceOutputIndex )
+import qualified Sound.Pulse.Foreign as PA
+import Sound.Pulse.Foreign ( SinkIndex, SourceIndex, SinkInputIndex, SourceOutputIndex
+                           , defaultSinkIndex, defaultSourceIndex
+                           , defaultSinkInputIndex, defaultSourceOutputIndex )
 
 data PulseAudio = PulseAudio
   { paContext :: IORef (ForeignPtr PA.Context)

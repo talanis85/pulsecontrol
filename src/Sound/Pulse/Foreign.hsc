@@ -6,7 +6,7 @@
 , ScopedTypeVariables
 #-}
 
-module System.PulseAudio.Foreign where
+module Sound.Pulse.Foreign where
 
 import Data.List (genericLength)
 import Foreign
